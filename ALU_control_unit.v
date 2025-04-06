@@ -31,14 +31,13 @@ module ALU_control_unit (
         OUTBUS_2 = 4'b1010;
 
     // Internal state registers
-  reg [3:0] cur_state, next_state;
-  reg [2:0] MAX_COUNT;
+  	reg [3:0] cur_state, next_state;
+  	reg [2:0] MAX_COUNT;
 
     // Signals for operations
     reg [1:0] operation_code;
-  reg [8:0] A;
-  reg [7:0] M, Q; 
-  	reg Q_1, Q_1_next = 0;
+  	reg [8:0] A;
+  	reg [7:0] M, Q; 
     reg read_A, read_M, read_Q, read_op;
     reg add, invert, double, shift_l, shift_r, increment, set_last_bit_Q;
     reg outbus_A, outbus_Q;
@@ -97,30 +96,44 @@ module ALU_control_unit (
     .SUM(sum_result)
   );
   
-  reg [8:0] A_next;
-  reg A_load;
+  wire A_load;
   
-  always @(*) begin 
-  	A_next = 9'hz;
-    A_load = 0;
-    
-    if(read_A) begin 
-      A_next = {INBUS[7], INBUS};
-      A_load = 1;
-    end 
-    if(add) begin 
-      A_next = sum_result;
-      A_load = 1;
-    end 
-    if(shift_r) begin 
-      A_next = {A[7], A[7], A[7:2]};
-      A_load = 1;
-    end 
-    if(shift_l) begin 
-      A_next = {A[8], A[6:0], Q[7]};
-      A_load = 1;
-    end 	
-  end 
+  mux2_1 #(.WIDTH(1)) A_LOAD (
+    .in0(1'b0),
+    .in1(1'b1),
+    .out(A_load),
+    .sel(read_A | add | shift_r | shift_l)
+  );
+  
+  wire [8:0] A_next_read, A_next_sum, A_next_shifted, A_next;
+  
+  mux2_1 #(.WIDTH(9)) A_NEXT_1 (
+    .in0(A),
+    .in1({INBUS[7], INBUS}),
+    .out(A_next_read),
+    .sel(read_A)
+  );
+  
+  mux2_1 #(.WIDTH(9)) A_NEXT_2 (
+    .in0(A_next_read),
+    .in1(sum_result),
+    .out(A_next_sum),
+    .sel(add)
+  );
+  
+  mux2_1 #(.WIDTH(9)) A_NEXT_3 (
+    .in0(A_next_sum),
+    .in1({A[7], A[7], A[7:2]}),
+    .out(A_next_shifted),
+    .sel(shift_r)
+  );
+  
+  mux2_1 #(.WIDTH(9)) A_NEXT_4 (
+    .in0(A_next_shifted),
+    .in1({A[8], A[6:0], Q[7]}),
+    .out(A_next),
+    .sel(shift_l)
+  );
   
   ff #(.WIDTH(9)) FF_A (
     .d(A_next),
@@ -130,31 +143,61 @@ module ALU_control_unit (
     .q(A)
   );
   
-  reg [7:0] Q_next;
-  reg Q_load;
+  wire Q_load;
   
-  always @(*) begin 
-  	Q_next = 8'hz;
-    Q_load = 0;
-    
-    if(read_Q) begin 
-    	Q_next = INBUS;
-      	Q_load = 1;
-    end 
-    if(shift_r) begin
-      Q_1_next = Q[1];
-      Q_next = {A[1], A[0], Q[7:2]};
-      Q_load = 1;
-    end
-	if(shift_l) begin 
-      Q_next = {Q[6:1], ~A[8], 1'b0};
-      Q_load = 1;
-    end
-	if(set_last_bit_Q) begin 
-      Q_next = {Q[7:1], ~A[8]};
-      Q_load = 1;
-    end 
-  end 
+  mux2_1 #(.WIDTH(1)) Q_LOAD (
+    .in0(1'b0),
+    .in1(1'b1),
+    .out(Q_load),
+    .sel(read_Q | shift_r | shift_l | set_last_bit_Q)
+  );
+  
+  wire [7:0] Q_next_read, Q_next_shifted_1, Q_next_shifted_2, Q_next;
+  
+  mux2_1 #(.WIDTH(8)) Q_NEXT_1 (
+    .in0(Q),
+    .in1(INBUS),
+    .out(Q_next_read),
+    .sel(read_Q)
+  );
+  
+  mux2_1 #(.WIDTH(8)) Q_NEXT_2 (
+    .in0(Q_next_read),
+    .in1({A[1], A[0], Q[7:2]}),
+    .out(Q_next_shifted_1),
+    .sel(shift_r)
+  );
+  
+  mux2_1 #(.WIDTH(8)) Q_NEXT_3 (
+    .in0(Q_next_shifted_1),
+    .in1({Q[6:1], ~A[8], 1'b0}),
+    .out(Q_next_shifted_2),
+    .sel(shift_l)
+  );
+  
+  mux2_1 #(.WIDTH(8)) Q_NEXT_4 (
+    .in0(Q_next_shifted_2),
+    .in1({Q[7:1], ~A[8]}),
+    .out(Q_next),
+    .sel(set_last_bit_Q)
+  );
+  
+  ff #(.WIDTH(8)) FF_Q (
+    .d(Q_next),
+    .load(Q_load),
+    .clk(clk),
+    .reset_n(reset_n),
+    .q(Q)
+  );
+  
+  wire Q_1, Q_1_next;
+  
+  mux2_1 #(.WIDTH(1)) Q_1_NEXT (
+    .in0(Q_1),
+    .in1(Q[1]),
+    .out(Q_1_next),
+    .sel(shift_r)
+  );
   
   ff #(.WIDTH(8)) M_ff (
     .d(INBUS),
@@ -162,14 +205,6 @@ module ALU_control_unit (
     .clk(clk),
     .load(read_M),
     .reset_n(reset_n)
-  );
-  	
-  ff #(.WIDTH(8)) FF_Q (
-    .d(Q_next),
-    .load(Q_load),
-    .clk(clk),
-    .reset_n(reset_n),
-    .q(Q)
   );
   
   ff #(.WIDTH(1)) FF_Q_1(
